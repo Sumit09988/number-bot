@@ -1,14 +1,11 @@
 import os
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import requests
 import json
-import threading
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 import io
-import random
 
 TOKEN = "8617423223:AAHUcMIDMWXVN0rpiWECM1v-3JucJzObiQs"
 CHANNEL_1 = "https://t.me/SUMITNETW0RK"
@@ -18,13 +15,11 @@ CHANNEL_4 = "https://t.me/SlotsByPhoenix"
 ADMIN_IDS = [7515864015, 8242927146]
 API_URL = "https://numinfo-eris.vercel.app/info?key=sumit128&id="
 
-REMINDER_INTERVAL = 30
-
 # ============ DATABASE ============
 def init_db():
     conn = sqlite3.connect('users.db')
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, last_name TEXT, join_date TEXT, last_active TEXT, total_queries INTEGER DEFAULT 0, reminded BOOLEAN DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, last_name TEXT, join_date TEXT, last_active TEXT, total_queries INTEGER DEFAULT 0)''')
     c.execute('''CREATE TABLE IF NOT EXISTS queries (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, number TEXT, timestamp TEXT, result TEXT)''')
     conn.commit()
     conn.close()
@@ -32,14 +27,14 @@ def init_db():
 def add_user(user_id, username, first_name, last_name):
     conn = sqlite3.connect('users.db')
     c = conn.cursor()
-    c.execute('''INSERT OR IGNORE INTO users (user_id, username, first_name, last_name, join_date, last_active, total_queries, reminded) VALUES (?, ?, ?, ?, ?, ?, 0, 0)''', (user_id, username, first_name, last_name, datetime.now().isoformat(), datetime.now().isoformat()))
+    c.execute('''INSERT OR IGNORE INTO users (user_id, username, first_name, last_name, join_date, last_active, total_queries) VALUES (?, ?, ?, ?, ?, ?, 0)''', (user_id, username, first_name, last_name, datetime.now().isoformat(), datetime.now().isoformat()))
     conn.commit()
     conn.close()
 
 def update_user_activity(user_id):
     conn = sqlite3.connect('users.db')
     c = conn.cursor()
-    c.execute('''UPDATE users SET last_active = ?, total_queries = total_queries + 1, reminded = 0 WHERE user_id = ?''', (datetime.now().isoformat(), user_id))
+    c.execute('''UPDATE users SET last_active = ?, total_queries = total_queries + 1 WHERE user_id = ?''', (datetime.now().isoformat(), user_id))
     conn.commit()
     conn.close()
 
@@ -51,59 +46,13 @@ def get_total_users():
     conn.close()
     return count
 
-def get_inactive_users():
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    cutoff = (datetime.now() - timedelta(minutes=REMINDER_INTERVAL)).isoformat()
-    c.execute('''SELECT user_id, first_name, reminded FROM users WHERE last_active < ? AND reminded = 0''', (cutoff,))
-    users = c.fetchall()
-    conn.close()
-    return users
-
-def mark_reminded(user_id):
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('''UPDATE users SET reminded = 1 WHERE user_id = ?''', (user_id,))
-    conn.commit()
-    conn.close()
-
 # ============ BOT ============
-bot_app = Application.builder().token(TOKEN).build()
+bot_app = ApplicationBuilder().token(TOKEN).build()
 verified_users = set()
 
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
-REMINDER_MESSAGES = [
-    "**👋 HELLO I'M READY TO USE!**\n\nSend any 10-digit number to get info 💪",
-    "**👋 HELLO WHERE ARE YOU?**\n\nSearch any number now! 📱💖",
-    "**🌟 STILL WAITING FOR YOU!**\n\nSend a number and get instant results 🚀",
-    "**⚡ DON'T FORGET!**\n\nI'm here to help you with number lookups 💯",
-    "**💫 READY WHEN YOU ARE!**\n\nJust send a 10-digit number and boom! 💥",
-    "**👀 I CAN SEE YOU'RE BUSY!**\n\nBut I'm always here for number searches 🔍"
-]
-
-async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
-    try:
-        inactive_users = get_inactive_users()
-        for user_id, first_name, reminded in inactive_users:
-            if reminded == 0:
-                try:
-                    msg = random.choice(REMINDER_MESSAGES)
-                    await context.bot.send_message(chat_id=user_id, text=msg, parse_mode='Markdown')
-                    mark_reminded(user_id)
-                    print(f"✅ Reminder sent to {first_name} ({user_id})")
-                except Exception as e:
-                    print(f"❌ Failed to send reminder to {user_id}: {e}")
-    except Exception as e:
-        print(f"❌ Reminder error: {e}")
-
-def schedule_reminders(app):
-    job_queue = app.job_queue
-    job_queue.run_repeating(send_reminders, interval=REMINDER_INTERVAL * 60, first=60)
-    print(f"✅ Reminders scheduled every {REMINDER_INTERVAL} minutes")
-
-# ============ BUTTONS ============
 def get_main_buttons(user_id):
     buttons = [[InlineKeyboardButton("📱 LOOKUP NOW", callback_data='lookup')]]
     if is_admin(user_id):
@@ -121,7 +70,6 @@ def get_join_buttons():
     ]
     return InlineKeyboardMarkup(buttons)
 
-# ============ MEMBERSHIP CHECK ============
 async def is_member(user_id, context):
     channels = ["@SUMITNETW0RK", "@numberleakks", "@lokixnetwork", "@SlotsByPhoenix"]
     for channel in channels:
@@ -133,7 +81,6 @@ async def is_member(user_id, context):
             return False
     return True
 
-# ============ NOTIFY ADMINS ============
 async def notify_admins(context, message):
     for admin_id in ADMIN_IDS:
         try:
@@ -141,7 +88,6 @@ async def notify_admins(context, message):
         except:
             pass
 
-# ============ API ============
 async def get_number_info(number):
     try:
         response = requests.get(f"{API_URL}{number}", timeout=20)
@@ -170,7 +116,7 @@ async def get_number_info(number):
         return ("ERROR", str(e))
 
 # ============ HANDLERS ============
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context):
     user = update.effective_user
     user_id = user.id
     add_user(user_id, user.username, user.first_name, user.last_name)
@@ -184,7 +130,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(f"👋 **Welcome {user.first_name}!**\n\n📱 Send any 10-digit number to get info\n👨‍💻 Developer: @T4HKR", reply_markup=get_main_buttons(user_id), parse_mode='Markdown')
 
-async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def check_join(update: Update, context):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -198,20 +144,20 @@ async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.edit_message_text("❌ **Still not joined all channels!**\n\nPlease join all 4 channels first:", reply_markup=get_join_buttons(), parse_mode='Markdown')
 
-async def lookup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def lookup(update: Update, context):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     await query.edit_message_text("📱 **Send a 10-digit number**\nExample: `9876543210`\n\n⚠️ Without +91", reply_markup=get_main_buttons(user_id), parse_mode='Markdown')
 
-async def home(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def home(update: Update, context):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     user = query.from_user
     await query.edit_message_text(f"👋 **Welcome {user.first_name}!**\n\n📱 Send any 10-digit number to get info\n👨‍💻 Developer: @T4HKR", reply_markup=get_main_buttons(user_id), parse_mode='Markdown')
 
-async def total_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def total_users(update: Update, context):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -221,7 +167,7 @@ async def total_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = get_total_users()
     await query.edit_message_text(f"📊 **Total Users**\n\n👥 Total Users: `{total}`\n\n👨‍💻 Developer: @T4HKR", reply_markup=get_main_buttons(user_id), parse_mode='Markdown')
 
-async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def broadcast_callback(update: Update, context):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -231,7 +177,7 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text("📢 **BROADCAST MODE**\n\nSend the message you want to broadcast\nType /cancel to stop", reply_markup=get_main_buttons(user_id), parse_mode='Markdown')
     context.user_data['broadcast_mode'] = True
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context):
     user = update.effective_user
     user_id = user.id
     text = update.message.text.strip()
@@ -294,7 +240,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await msg.edit_text(f"❌ **Error!**\n\n{result_data}", reply_markup=get_main_buttons(user_id), parse_mode='Markdown')
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel(update: Update, context):
     context.user_data['broadcast_mode'] = False
     user_id = update.effective_user.id
     await update.message.reply_text("❌ Cancelled", reply_markup=get_main_buttons(user_id), parse_mode='Markdown')
@@ -315,9 +261,4 @@ if __name__ == '__main__':
     print("✅ Database initialized!")
     print("✅ Bot Started! Developer: @T4HKR")
     print(f"👑 Admins: {ADMIN_IDS}")
-    
-    # Schedule reminders
-    schedule_reminders(bot_app)
-    
-    # Start bot
     bot_app.run_polling(allowed_updates=Update.ALL_TYPES)
