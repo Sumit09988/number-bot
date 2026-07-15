@@ -1,1 +1,0 @@
-worker: python osint.py
